@@ -1,12 +1,34 @@
 import typing
 
-from mitmproxy import command
-from mitmproxy import ctx
-from mitmproxy import flow
-from mitmproxy import types
+from multiprocessing import Pool, Process
+from mitmproxy import (command, ctx, flow, types)
 
+import requests
 
-class FlowFuzzer:
+def get_md_dict(multidict):
+    """ Return a dict going from cookie names to cookie values
+          - Note that it includes both the cookies sent in the original request and
+            the cookies sent by the server """
+    return {name: value for name, value in multidict}
+
+def make_http_req(mreq):
+    # assumes that you have shell environment variables defined for http[s] proxies and CA path
+    # that correspond to your mitmproxy configuration
+    # eg:
+    # export HTTP_PROXY="http://127.0.0.1:8080"
+    # export HTTPS_PROXY="http://127.0.0.1:8080"
+    # export REQUESTS_CA_BUNDLE="(absolute_path_to).mitmproxy/mitmproxy-ca-cert.pem"
+    headers = get_md_dict(mreq.headers.fields)
+    cookies = get_md_dict(mreq.cookies.fields)
+
+    requests.request(method=mreq.method,
+            url=mreq.url,
+            headers=headers,
+            data=mreq.content,
+            cookies=cookies,
+            timeout=4)
+
+class RequestFuzzer:
 
     def replay_flow_with_replacements(
             self,
@@ -15,16 +37,17 @@ class FlowFuzzer:
             replacements
         ):
 
+        ctx.log.info("starting loop thru replacements")
+
         for replacement in replacements:
             dup = flow.copy()
             dup.request.replace(match, replacement)
-            # Only interactive tools have a view. If we have one, add a duplicate entry
-            # for our flow.
-            if "view" in ctx.master.addons:
-                ctx.master.commands.call("view.flows.add", [dup])
-            ctx.master.commands.call("replay.client", [dup])
+            # note: requests.request seems unresponsive when you call it from the
+            # same process (proxy server doesn't respond)
+            p = Process(target=make_http_req, args=(dup.request,))
+            p.start()
 
-    @command.command("flow.fuzzer")
+    @command.command("fuzz.request")
     def fuzz_with_replace(
             self,
             flow: flow.Flow,
@@ -32,13 +55,9 @@ class FlowFuzzer:
             match: str
     ) -> None:
 
-        # Avoid an infinite loop by not replaying already replayed requests
-        if flow.request.is_replay:
-            return
-
         with open(path) as f:
             self.replay_flow_with_replacements(flow, match, f.read().splitlines())
 
 addons = [
-    FlowFuzzer()
+    RequestFuzzer()
 ]
