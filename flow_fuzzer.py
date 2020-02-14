@@ -1,6 +1,8 @@
 import typing
 
-from multiprocessing import Pool, Process
+from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import Process
+
 from mitmproxy import (command, ctx, flow, types)
 
 import requests
@@ -37,15 +39,16 @@ class RequestFuzzer:
             replacements
         ):
 
-        ctx.log.info("starting loop thru replacements")
-
-        for replacement in replacements:
-            dup = flow.copy()
-            dup.request.replace(match, replacement)
-            # note: requests.request seems unresponsive when you call it from the
-            # same process (proxy server doesn't respond)
-            p = Process(target=make_http_req, args=(dup.request,))
-            p.start()
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            for replacement in replacements:
+                dup = flow.copy()
+                dup.request.replace(match, replacement)
+                executor.submit(make_http_req, dup.request)
+                # note: requests.request seems unresponsive when you call it from the
+                # same process (proxy server doesn't respond)
+                #  p = Process(target=make_http_req, args=(dup.request,))
+                #  make_http_req(dup.request)
+                #  p.start()
 
     @command.command("fuzz.request")
     def fuzz_with_replace(
@@ -56,7 +59,10 @@ class RequestFuzzer:
     ) -> None:
 
         with open(path) as f:
-            self.replay_flow_with_replacements(flow, match, f.read().splitlines())
+            p=Process(target=self.replay_flow_with_replacements, args=(flow, match, f.read().splitlines()))
+            p.start()
+                
+            #  self.replay_flow_with_replacements(flow, match, f.read().splitlines())
 
 addons = [
     RequestFuzzer()
