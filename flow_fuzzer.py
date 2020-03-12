@@ -1,4 +1,5 @@
 import typing
+import os
 
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Process
@@ -17,17 +18,21 @@ def make_http_req(mreq):
     # assumes that you have shell environment variables defined for http[s] proxies and CA path
     # that correspond to your mitmproxy configuration
     # eg:
-    # export HTTP_PROXY="http://127.0.0.1:8080"
-    # export HTTPS_PROXY="http://127.0.0.1:8080"
-    # export REQUESTS_CA_BUNDLE="(absolute_path_to).mitmproxy/mitmproxy-ca-cert.pem"
+    # export MITMPROXY_CA_BUNDLE="(absolute_path_to).mitmproxy/mitmproxy-ca-cert.pem"
     headers = get_md_dict(mreq.headers.fields)
     cookies = get_md_dict(mreq.cookies.fields)
+    proxies = {
+        "http" : "http://127.0.0.1:8080",
+        "https" : "http://127.0.0.1:8080",
+        }
 
     requests.request(method=mreq.method,
             url=mreq.url,
             headers=headers,
             data=mreq.content,
             cookies=cookies,
+            proxies=proxies,
+            verify=os.environ.get("MITMPROXY_CA_BUNDLE"),
             timeout=4)
 
 class RequestFuzzer:
